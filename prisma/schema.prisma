@@ -1,0 +1,328 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum RefundReason {
+  DAMAGED_PRODUCT
+  WRONG_PRODUCT
+  DELAYED_DELIVERY
+  CHANGED_MIND
+  OTHER
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  BOUGHT
+  SHIPPED
+  RECEIVED_SHIPMENT
+  ON_DELIVERY
+  DELIVERED
+  REFUNDED
+  CANCELED
+}
+
+enum Vendor {
+  RAZORPAY
+  BKASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum TicketStatus {
+  PENDING
+  RESOLVED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
+enum Role {
+  USER
+  MANAGER
+  ADMIN
+  EDITOR
+}
+
+enum NATIONALITY {
+  BANGLADESH
+  INDIA
+}
+
+enum RequestType {
+  LINK
+  DIRECT
+}
+
+enum NotificationRequestType {
+  POSITIVE
+  NEGATIVE
+}
+
+enum NotificationType {
+  ORDER
+  REQUEST
+  PAYMENT
+  SUPPORT
+  REFUND
+}
+
+enum AuthProvider {
+  CREDENTIALS
+  GOOGLE
+}
+
+model Account {
+  id                String       @id @default(uuid())
+  userId            String       @unique
+  providerAccountId String       @map("provider_account_id")
+  accessToken       String?      @map("access_token")
+  refreshToken      String?      @map("refresh_token")
+  expiresAt         DateTime?    @map("expires_at")
+  provider          AuthProvider
+
+  user Customer @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  email        String   @unique
+  phone        String   @unique
+  password     String
+  image        String?
+  role         Role     @default(USER)
+  refreshToken String?  @unique @map("refresh_token") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Customer {
+  id              String                 @id @default(uuid())
+  firstName       String                 @map("first_name")
+  lastName        String                 @map("last_name")
+  email           String                 @unique
+  phone           String?                @unique
+  password        String?
+  nationality     NATIONALITY?
+  image           String?
+  bio             String?
+  refreshToken    String?                @unique @map("refresh_token") @db.VarChar(255)
+  isVerified      Boolean                @default(false) @map("is_verified")
+  isPhoneVerified Boolean                @default(false) @map("is_phone_verified")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  otp             Otp?
+  requests        Request[]
+  address         CustomerAddress?
+  order           Order[]
+  supportTicket   SupportTicket[]
+  notification    NotificationCustomer[]
+  Payment         Payment[]
+  RefundRequest   RefundRequest[]
+  accounts        Account[]
+
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String   @id @default(uuid())
+  house      String?
+  road       String?
+  street     String?
+  thana      String?
+  district   String?
+  postalCode String?  @map("postal_code")
+  mapLink    String?  @map("map_link")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String   @unique @map("customer_id")
+
+  @@map("customer_addresses")
+}
+
+model Otp {
+  id         Int      @id @default(autoincrement())
+  otp        String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String   @unique @map("customer_id")
+  resetToken String?
+
+  @@map("otps")
+}
+
+model Request {
+  id                        String        @id @default(uuid())
+  customer                  Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId                String        @map("customer_id")
+  productUrl                String?       @map("product_url")
+  productName               String?       @map("product_name")
+  description               String?
+  image                     String?
+  quantity                  Int           @default(1)
+  productCost               Float?        @map("product_cost")
+  internationalShippingCost Float?        @map("international_shipping_cost")
+  localShippingCost         Float?        @map("local_shipping_cost")
+  miscellaneousCost         Float?        @map("miscellaneous_cost")
+  totalCost                 Float?        @map("total_cost")
+  status                    RequestStatus @default(PENDING)
+  adminNotes                String?       @map("admin_notes")
+  customerNotes             String?       @map("customer_notes")
+  estimatedDeliveryDate     DateTime?     @map("estimated_delivery_date")
+  createdAt                 DateTime      @default(now()) @map("created_at")
+  updatedAt                 DateTime      @updatedAt @map("updated_at")
+  requestType               RequestType   @map("request_type")
+  orderId                   String?
+  Order                     Order?
+
+  @@map("requests")
+}
+
+model Order {
+  id             String           @id @default(uuid())
+  status         OrderStatus      @default(PENDING)
+  payments       Payment?
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  house          String
+  road           String?
+  street         String?
+  thana          String?
+  district       String
+  postalCode     String           @map("postal_code")
+  mapLink        String           @map("map_link")
+  totalCost      Float            @map("total_cost")
+  customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId     String           @map("customer_id")
+  request        Request          @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  requestId      String           @unique @map("request_id")
+  orderStatusLog OrderStatusLog[]
+  refundedAmount Float            @default(0) @map("refunded_amount")
+  isRefunded     Boolean          @default(false) @map("is_refunded")
+  RefundRequest  RefundRequest?
+
+  @@map("orders")
+}
+
+model OrderStatusLog {
+  id        String       @id @default(uuid())
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   String       @map("order_id")
+  oldStatus OrderStatus? @map("old_status")
+  newStatus OrderStatus  @map("new_status")
+  updatedBy String       @map("updated_by")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@map("order_status_logs")
+}
+
+model Payment {
+  id         String        @id @default(uuid())
+  amount     Float         @default(0)
+  currency   String?
+  razorPayId String?       @unique @map("razor_pay_id")
+  status     PaymentStatus @default(PENDING)
+  transId    String?       @unique @map("trans_id")
+  paymentId  String?       @unique @map("payment_id")
+  orderId    String        @unique @map("order_id")
+  vendor     Vendor?
+  order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String        @map("customer_id")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  @@map("payments")
+}
+
+model SupportTicket {
+  id          String       @id @default(uuid())
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId  String?      @map("customer_id")
+  title       String
+  description String
+  attachment  String?
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  status      TicketStatus @default(PENDING)
+}
+
+model NotificationCustomer {
+  id                      Int                     @id @default(autoincrement())
+  title                   String
+  description             String
+  relevantId              String?                 @map("relevant_id")
+  notificationType        NotificationType        @map("notification_type")
+  notificationRequestType NotificationRequestType @map("notification_request_type")
+  isRead                  Boolean                 @default(false) @map("is_read")
+  createdAt               DateTime                @default(now()) @map("created_at")
+  customer                Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId              String                  @map("customer_id")
+
+  @@map("notifications_customer")
+}
+
+model NotificationAdmin {
+  id                      Int                     @id @default(autoincrement())
+  title                   String
+  description             String
+  relevantId              String?                 @map("relevant_id")
+  notificationType        NotificationType        @map("notification_type")
+  notificationRequestType NotificationRequestType @map("notification_request_type")
+  isRead                  Boolean                 @default(false) @map("is_read")
+  createdAt               DateTime                @default(now()) @map("created_at")
+
+  @@map("notifications_admin")
+}
+
+model RefundRequest {
+  id            String       @id @default(cuid())
+  orderId       String       @unique @map("order_id")
+  order         Order        @relation(fields: [orderId], references: [id])
+  customerId    String       @map("customer_id")
+  customer      Customer     @relation(fields: [customerId], references: [id])
+  amount        Float
+  reason        RefundReason
+  description   String?
+  status        RefundStatus @default(PENDING)
+  adminNotes    String?
+  attachments   String[] // URLs to images/documents
+  requestedAt   DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  processedAt   DateTime?    @map("processed_at")
+  processedBy   String?      @map("processed_by")
+  refundMethod  String?      @map("refund_method")
+  transactionId String?      @map("transaction_id")
+
+  @@map("refund_requests")
+}
