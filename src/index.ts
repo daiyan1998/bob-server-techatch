@@ -15,6 +15,8 @@ import { PORT } from "@/utils/constants";
 
 import router from "@/routes";
 import { dynamicCors } from "./middlewares/cors.middleware";
+import httpLogger from "@/middlewares/httpLogger";
+import logger from "./logger";
 
 const app: Application = express();
 
@@ -33,9 +35,26 @@ app.use(cookieParser());
 if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
 }
+app.use(httpLogger);
 app.use(dynamicCors);
 
 app.use(router);
+app.use(
+  (
+    err: Error,
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    logger.error("Unhandled Express error", {
+      message: err.message,
+      stack: err.stack,
+      path: req.path,
+      method: req.method,
+    });
+    res.status(500).json({ error: "Something went wrong" });
+  },
+);
 
 // Test
 

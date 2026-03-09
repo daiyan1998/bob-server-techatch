@@ -17,6 +17,7 @@ export const createBkashPayment = async (
   orderId: string,
 ) => {
   try {
+    if (amount === 0) return;
     const response = await fetch(
       `${process.env.BKASH_BASE_URL}/tokenized/checkout/create`,
       {
@@ -45,12 +46,16 @@ export const createBkashPayment = async (
 
     const data = await response.json();
     if (data.statusCode !== "0000") {
-      if (data.statusMessage?.toLowerCase().includes("insufficient balance") ||
-        data.statusCode === "2024") {
+      if (
+        data.statusMessage?.toLowerCase().includes("insufficient balance") ||
+        data.statusCode === "2024"
+      ) {
         throw new Error(`Insufficient balance: ${data.statusMessage}`);
       }
 
-      throw new Error(`bKash payment failed: ${data.statusMessage || data.statusCode}`);
+      throw new Error(
+        `bKash payment failed: ${data.statusMessage || data.statusCode}`,
+      );
     }
 
     await db.payment.update({
@@ -151,7 +156,6 @@ export const validateIndPayment = async (
   signature: string,
 ) => {
   try {
-
     // Verify the signature
     let isValid = false;
     try {
@@ -164,7 +168,10 @@ export const validateIndPayment = async (
       throw new Error("Invalid Signature");
     }
 
-    if (data.event === "payment.captured" || data.event === "payment.authorized") {
+    if (
+      data.event === "payment.captured" ||
+      data.event === "payment.authorized"
+    ) {
       const payment = data.payload.payment.entity;
 
       // Find the payment record by razorPayId
@@ -173,7 +180,9 @@ export const validateIndPayment = async (
       });
 
       if (!paymentRecord) {
-        console.error(`Payment record not found for order_id: ${payment.order_id}`);
+        console.error(
+          `Payment record not found for order_id: ${payment.order_id}`,
+        );
         throw new Error("Payment record not found");
       }
 
