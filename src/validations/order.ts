@@ -1,5 +1,4 @@
-import { OTP_LENGTH, PASSWORD_LENGTH } from "@/utils/constants";
-import { OrderStatus, RequestStatus, RequestType } from "@prisma/client";
+import { OrderStatus } from "@prisma/client";
 import { z } from "zod";
 
 export const getOrderSchema = z.object({
@@ -62,6 +61,9 @@ export const createOrderSchema = z.object({
     postalCode: z.string(),
     mapLink: z.string(),
     requestId: z.coerce.string(),
+    items: z
+      .array(z.string())
+      .min(1, { message: "At least one item is required" }),
   }),
 });
 

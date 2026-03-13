@@ -1,4 +1,7 @@
-import { updateRequestById } from "@/services/requests.service";
+import {
+  updateRequestById,
+  updateRequestItemById,
+} from "@/services/requests.service";
 import {
   getRequestsByCustomerId,
   getAllRequests,
@@ -142,6 +145,42 @@ export const updateRequestByIdController = async (
     res
       .status(StatusCodes.OK)
       .json({ success: true, message: "Request updated successfully." });
+  } catch (error) {
+    const errMessage =
+      error instanceof Error ? error.message : "An unknown error occurred";
+    next(new AppError(errMessage, StatusCodes.INTERNAL_SERVER_ERROR));
+  }
+};
+
+/**
+ * Update a specific request item (admin action)
+ * PATCH /requests/:requestId/items/:itemId
+ */
+export const updateRequestItemController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { requestId, itemId } = req.params;
+    const userId = req.user?.id;
+    const updatedData = req.body;
+    const updatedItem = await updateRequestItemById(
+      requestId,
+      itemId,
+      updatedData,
+      userId,
+    );
+
+    if (!updatedItem) {
+      return next(
+        new AppError("Request item not found", StatusCodes.NOT_FOUND),
+      );
+    }
+
+    res
+      .status(StatusCodes.OK)
+      .json({ success: true, message: "Request item updated successfully." });
   } catch (error) {
     const errMessage =
       error instanceof Error ? error.message : "An unknown error occurred";

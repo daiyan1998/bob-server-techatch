@@ -25,6 +25,29 @@ import { generateId, parseDateRange } from "@/utils/helper-fns";
 import { SysEntities } from "@/utils/constants";
 import { getToken } from "@/utils/bkash-auth";
 
+// Common include for order items with request item details
+const orderItemsInclude = {
+  items: {
+    include: {
+      requestItem: {
+        select: {
+          productName: true,
+          productUrl: true,
+          description: true,
+          image: true,
+          quantity: true,
+          productCost: true,
+          internationalShippingCost: true,
+          localShippingCost: true,
+          miscellaneousCost: true,
+          totalCost: true,
+          estimatedDeliveryDate: true,
+        },
+      },
+    },
+  },
+};
+
 export const getOrdersByCustomerId = async (
   id: string,
   page: number = 1,
@@ -69,21 +92,7 @@ export const getOrdersByCustomerId = async (
             status: true,
           },
         },
-        request: {
-          select: {
-            quantity: true,
-            productCost: true,
-            productUrl: true,
-            internationalShippingCost: true,
-            localShippingCost: true,
-            miscellaneousCost: true,
-            totalCost: true,
-            productName: true,
-            image: true,
-            description: true,
-            estimatedDeliveryDate: true,
-          },
-        },
+        ...orderItemsInclude,
         orderStatusLog: {
           select: {
             oldStatus: true,
@@ -131,21 +140,7 @@ export const getOrderDetails = async (id: string) => {
             phone: true,
           },
         },
-        request: {
-          select: {
-            quantity: true,
-            productCost: true,
-            productUrl: true,
-            internationalShippingCost: true,
-            localShippingCost: true,
-            miscellaneousCost: true,
-            totalCost: true,
-            productName: true,
-            image: true,
-            description: true,
-            estimatedDeliveryDate: true,
-          },
-        },
+        ...orderItemsInclude,
         payments: {
           select: {
             status: true,
@@ -245,12 +240,7 @@ export const getOrders = async (options: OrdersQueryOptions) => {
             createdAt: "asc",
           },
         },
-        request: {
-          select: {
-            productName: true,
-            description: true,
-          },
-        },
+        ...orderItemsInclude,
       },
       orderBy: {
         createdAt: "desc",
@@ -270,80 +260,116 @@ export const getOrders = async (options: OrdersQueryOptions) => {
 
 export const createOrder = async (
   customerId: string,
-  createOrder: CreateOrder["body"],
+  createOrderData: CreateOrder["body"],
 ) => {
   try {
-    const request = await db.request.findUnique({
-      where: { id: createOrder.requestId },
-    });
-
     const customer = await findCustomerById(customerId);
 
     if (!customer?.isVerified) {
       throw new Error("Customer not verified");
     }
+
+    // Validate the request exists
+    const request = await db.request.findUnique({
+      where: { id: createOrderData.requestId },
+      include: { items: true },
+    });
+
     if (!request) {
       throw new Error("Request not found.");
     }
 
-    if (request.status !== RequestStatus.APPROVED) {
-      throw new Error("Request not approved.");
+    // Fetch and validate each requested item
+    const requestItems = await db.requestItem.findMany({
+      where: {
+        id: { in: createOrderData.items },
+        requestId: createOrderData.requestId,
+      },
+    });
+
+    if (requestItems.length !== createOrderData.items.length) {
+      throw new Error(
+        "One or more request items not found or do not belong to this request.",
+      );
     }
 
-    const totalAmount = request.totalCost;
+    // Ensure all selected items are approved
+    for (const item of requestItems) {
+      if (item.status !== RequestStatus.APPROVED) {
+        throw new Error(
+          `Request item "${item.productName || item.id}" is not approved.`,
+        );
+      }
+    }
 
-    const order = await db.order.create({
-      data: {
-        id: generateId(SysEntities.ORDER),
-        customerId,
-        requestId: createOrder.requestId,
-        house: createOrder.house,
-        road: createOrder.road,
-        thana: createOrder.thana,
-        district: createOrder.district,
-        totalCost: totalAmount ? totalAmount : 0,
-        mapLink: createOrder.mapLink,
-        postalCode: createOrder.postalCode,
-        street: createOrder.street,
-      },
-      include: {
-        customer: true,
-      },
-    });
+    // Calculate total cost from selected items
+    const totalAmount = requestItems.reduce(
+      (sum, item) => sum + (item.totalCost || 0),
+      0,
+    );
 
-    // Create payment
-    await db.payment.create({
-      data: {
-        id: generateId(SysEntities.PAYMENT),
-        orderId: order.id,
-        customerId,
-      },
-    });
+    const order = await db.$transaction(async (tx) => {
+      // Create the order
+      const newOrder = await tx.order.create({
+        data: {
+          id: generateId(SysEntities.ORDER),
+          customerId,
+          requestId: createOrderData.requestId,
+          house: createOrderData.house,
+          road: createOrderData.road,
+          thana: createOrderData.thana,
+          district: createOrderData.district,
+          totalCost: totalAmount,
+          mapLink: createOrderData.mapLink,
+          postalCode: createOrderData.postalCode,
+          street: createOrderData.street,
+        },
+      });
 
-    // Create order status log
-    await db.orderStatusLog.create({
-      data: {
-        orderId: order.id,
-        oldStatus: null,
-        newStatus: OrderStatus.PENDING,
-        updatedBy: customerId,
-      },
-    });
+      // Create order items
+      for (const item of requestItems) {
+        await tx.orderItem.create({
+          data: {
+            orderId: newOrder.id,
+            requestItemId: item.id,
+            quantity: item.quantity,
+            price: item.totalCost || 0,
+          },
+        });
+      }
 
-    //update request order Id
-    await db.request.update({
-      where: {
-        id: createOrder.requestId,
-      },
-      data: {
-        orderId: order.id,
-      },
+      // Create payment
+      await tx.payment.create({
+        data: {
+          id: generateId(SysEntities.PAYMENT),
+          orderId: newOrder.id,
+          customerId,
+        },
+      });
+
+      // Create order status log
+      await tx.orderStatusLog.create({
+        data: {
+          orderId: newOrder.id,
+          oldStatus: null,
+          newStatus: OrderStatus.PENDING,
+          updatedBy: customerId,
+        },
+      });
+
+      return tx.order.findUnique({
+        where: { id: newOrder.id },
+        include: {
+          customer: true,
+          ...orderItemsInclude,
+        },
+      });
     });
 
     await createAdminNotification(
       `A New order has been placed`,
-      `A order has been placed by ${order.customer.firstName} ${order.customer.lastName}`,
-      order.id,
+      `A order has been placed by ${order!.customer.firstName} ${order!.customer.lastName}`,
+      order!.id,
       NotificationType.ORDER,
       NotificationRequestType.POSITIVE,
     );
@@ -398,6 +424,9 @@ export const updatOrderById = async (
   try {
     const order = await db.order.findUnique({
       where: { id },
+      include: {
+        ...orderItemsInclude,
+      },
     });
 
     if (!order) {
@@ -441,6 +470,12 @@ export const updatOrderById = async (
       );
     }
 
+    // Get a summary of product names from order items
+    const productNames = order.items
+      .map((item) => item.requestItem.productName)
+      .filter(Boolean)
+      .join(", ");
+
     const [updatedOrder] = await db.$transaction([
       db.order.update({
         where: { id },
@@ -454,11 +489,7 @@ export const updatOrderById = async (
               lastName: true,
             },
           },
-          request: {
-            select: {
-              productName: true,
-            },
-          },
+          ...orderItemsInclude,
         },
       }),
       db.orderStatusLog.create({
@@ -484,7 +515,7 @@ export const updatOrderById = async (
     await sendOrderStatusNotification(
       updatedOrder.customerId!,
       `${updatedOrder.customer.firstName} ${updatedOrder.customer.lastName}`,
-      updatedOrder.request.productName!,
+      productNames || "Multiple items",
       updatedOrder.id,
       data.status!,
     );

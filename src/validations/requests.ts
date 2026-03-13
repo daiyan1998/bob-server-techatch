@@ -28,22 +28,41 @@ export const getRequestSchema = z.object({
   }),
 });
 
+const requestItemSchema = z.object({
+  productUrl: z.string().optional(),
+  productName: z
+    .string()
+    .min(1, { message: "Product name cannot be empty" })
+    .trim()
+    .optional(),
+  description: z.string().optional(),
+  quantity: z.coerce.number().optional().default(1),
+});
+
 export const createRequestSchema = z.object({
   body: z.object({
-    productUrl: z.string().optional(),
-    productName: z
-      .string()
-      .min(1, { message: "Product name cannot be empty" })
-      .trim()
-      .optional(),
-    description: z.string().optional(),
-    quantity: z.coerce.number().optional().default(1),
+    items: z
+      .array(requestItemSchema)
+      .min(1, { message: "At least one item is required" }),
     requestType: z.enum([RequestType.DIRECT, RequestType.LINK], {
       message: "Request type must be either Direct or Link.",
     }),
   }),
 });
 
+export const updateRequestItemByAdminSchema = z.object({
+  body: z.object({
+    productCost: z.coerce.number().positive().optional(),
+    internationalShippingCost: z.coerce.number().nonnegative().optional(),
+    localShippingCost: z.coerce.number().nonnegative().optional(),
+    miscellaneousCost: z.coerce.number().nonnegative().optional(),
+    status: z.nativeEnum(RequestStatus).optional(),
+    adminNotes: z.string().optional(),
+    estimatedDeliveryDate: z.coerce.date().optional(),
+  }),
+});
+
+// Keep the old schema for backward compatibility (admin updating request-level)
 export const updateRequestByAdminSchema = z.object({
   body: z.object({
     productCost: z.coerce.number().positive().optional(),
@@ -67,3 +86,4 @@ export const updateRequestByUserSchema = z.object({
 
 export type CreateRequest = z.infer<typeof createRequestSchema>;
 export type UpdateRequest = z.infer<typeof updateRequestByAdminSchema>;
+export type UpdateRequestItem = z.infer<typeof updateRequestItemByAdminSchema>;

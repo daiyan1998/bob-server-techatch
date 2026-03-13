@@ -62,7 +62,8 @@ async function createCustomers() {
 }
 
 async function createProductRequests() {
-  console.log("Clearing existing data from Request table...");
+  console.log("Clearing existing data from Request and RequestItem tables...");
+  await db.requestItem.deleteMany();
   await db.request.deleteMany();
   console.log("Existing data cleared.");
 
@@ -71,44 +72,48 @@ async function createProductRequests() {
 
   for (let i = 0; i < numberOfRequests; i++) {
     const customer = faker.helpers.arrayElement(customers);
-    const productUrl = faker.internet.url();
-    const productName = faker.commerce.productName();
-    const description = faker.lorem.sentence();
-    const image = faker.image.urlPicsumPhotos();
-    const quantity = faker.number.int({ min: 1, max: 10 });
-    const status = "PENDING";
-    const requestType = faker.helpers.arrayElement(["LINK", "DIRECT"]);
+    const requestType = faker.helpers.arrayElement(["LINK", "DIRECT"]) as
+      | "LINK"
+      | "DIRECT";
+    const status = "PENDING" as const;
     const createdAt = faker.date.past();
     const updatedAt = faker.date.recent();
+
+    // Each request gets 1-3 items
+    const numItems = faker.number.int({ min: 1, max: 3 });
+    const items = [];
+
+    for (let j = 0; j < numItems; j++) {
+      items.push({
+        productUrl: faker.internet.url(),
+        productName: faker.commerce.productName(),
+        description: faker.lorem.sentence(),
+        image: faker.image.urlPicsumPhotos(),
+        quantity: faker.number.int({ min: 1, max: 10 }),
+        status,
+      });
+    }
 
     await db.request.create({
       data: {
         customer: { connect: { id: customer.id } },
-        productUrl,
-        productName,
-        description,
-        image,
-        quantity,
-        productCost: null,
-        internationalShippingCost: null,
-        localShippingCost: null,
-        miscellaneousCost: null,
         status,
-        adminNotes: null,
-        customerNotes: null,
-        estimatedDeliveryDate: null,
+        requestType,
         createdAt,
         updatedAt,
-        requestType,
+        items: {
+          create: items,
+        },
       },
     });
   }
 
-  console.log(`Seeded ${numberOfRequests} product requests`);
+  console.log(`Seeded ${numberOfRequests} product requests with items.`);
 }
 
 async function createOrders() {
   console.log("Clearing existing data from Order table...");
+  await db.orderItem.deleteMany();
   await db.order.deleteMany();
   console.log("Existing data cleared.");
 
@@ -119,145 +124,119 @@ async function createOrders() {
     return;
   }
 
-  // Get requests that don't already have an order
+  // Get requests that have approved items
   let availableRequests = await db.request.findMany({
     where: {
-      orderId: null,
-      status: "APPROVED", // Only approved requests should become orders
+      status: "PENDING",
+    },
+    include: { items: true },
+  });
+
+  // Approve some requests and their items with costs
+  if (availableRequests.length > 0) {
+    console.log("Approving some requests and their items...");
+
+    const toApprove = availableRequests.slice(
+      0,
+      Math.min(15, availableRequests.length),
+    );
+
+    for (const request of toApprove) {
+      // Approve each item with costs
+      for (const item of request.items) {
+        const productCost = faker.number.float({ min: 50, max: 5000 });
+        const internationalShippingCost = faker.number.float({
+          min: 10,
+          max: 500,
+        });
+        const localShippingCost = faker.number.float({ min: 5, max: 200 });
+        const miscellaneousCost = faker.number.float({ min: 5, max: 100 });
+        const totalCost =
+          productCost +
+          internationalShippingCost +
+          localShippingCost +
+          miscellaneousCost;
+
+        await db.requestItem.update({
+          where: { id: item.id },
+          data: {
+            status: "APPROVED",
+            productCost,
+            internationalShippingCost,
+            localShippingCost,
+            miscellaneousCost,
+            totalCost,
+          },
+        });
+      }
+
+      // Update request status
+      await db.request.update({
+        where: { id: request.id },
+        data: { status: "APPROVED" },
+      });
+    }
+  }
+
+  // Refresh approved requests with items
+  const approvedRequests = await db.request.findMany({
+    where: { status: "APPROVED" },
+    include: {
+      items: {
+        where: { status: "APPROVED" },
+      },
     },
   });
 
-  // If we don't have enough approved requests, update some to be approved
-  if (availableRequests.length < 10) {
-    console.log(
-      "Not enough approved requests. Approving some pending requests...",
-    );
-    const pendingRequests = await db.request.findMany({
-      where: {
-        status: "PENDING",
-        orderId: null,
-      },
-      take: 20 - availableRequests.length,
-    });
+  console.log(`Found ${approvedRequests.length} approved requests for orders.`);
 
-    for (const request of pendingRequests) {
-      await db.request.update({
-        where: { id: request.id },
-        data: {
-          status: "APPROVED",
-          productCost: faker.number.float({ min: 50, max: 5000 }),
-          internationalShippingCost: faker.number.float({ min: 10, max: 500 }),
-          miscellaneousCost: faker.number.float({ min: 5, max: 100 }),
-        },
-      });
-    }
-
-    // Refresh the available requests list
-    availableRequests = await db.request.findMany({
-      where: {
-        orderId: null,
-        status: "APPROVED",
-      },
-    });
-  }
-
-  // If we still don't have any requests, create some
-  if (availableRequests.length === 0) {
-    console.log("No available requests found. Creating new requests...");
-
-    for (let i = 0; i < 20; i++) {
-      const customer = faker.helpers.arrayElement(customers);
-      const productName = faker.commerce.productName();
-      const productCost = faker.number.float({ min: 50, max: 5000 });
-      const internationalShippingCost = faker.number.float({
-        min: 10,
-        max: 500,
-      });
-      const miscellaneousCost = faker.number.float({ min: 5, max: 100 });
-
-      await db.request.create({
-        data: {
-          customer: { connect: { id: customer.id } },
-          productUrl: faker.internet.url(),
-          productName,
-          description: faker.lorem.sentence(),
-          image: faker.image.urlPicsumPhotos(),
-          quantity: faker.number.int({ min: 1, max: 10 }),
-          productCost,
-          internationalShippingCost,
-          miscellaneousCost,
-          status: "APPROVED",
-          requestType: faker.helpers.arrayElement(["LINK", "DIRECT"]),
-        },
-      });
-    }
-
-    // Refresh the available requests list again
-    availableRequests = await db.request.findMany({
-      where: {
-        orderId: null,
-        status: "APPROVED",
-      },
-    });
-  }
-
-  console.log(
-    `Found ${availableRequests.length} available requests for orders`,
-  );
-
-  // Create orders for each available request
-  const numberOfOrders = Math.min(20, availableRequests.length);
+  const numberOfOrders = Math.min(10, approvedRequests.length);
 
   for (let i = 0; i < numberOfOrders; i++) {
-    const request = availableRequests[i];
+    const request = approvedRequests[i];
     const customer = await db.customer.findUnique({
       where: { id: request.customerId },
     });
 
-    if (!customer) {
-      console.log(`No customer found for request ${request.id}. Skipping.`);
-      continue;
-    }
+    if (!customer || request.items.length === 0) continue;
 
     const status = faker.helpers.arrayElement([
       "PENDING",
       "PROCESSING",
       "SHIPPED",
       "DELIVERED",
-    ]);
+    ]) as "PENDING" | "PROCESSING" | "SHIPPED" | "DELIVERED";
 
-    const street = faker.location.streetAddress();
-    const postalCode = faker.location.zipCode();
-    const mapLink = `https://maps.google.com/?q=${faker.location.latitude()},${faker.location.longitude()}`;
-    const thana = faker.location.city();
-    const district = faker.location.state();
-    const house = faker.location.buildingNumber();
-    const road = faker.location.street();
-
-    // Calculate total cost from request
-    const totalCost =
-      (request.productCost || 0) +
-      (request.internationalShippingCost || 0) +
-      (request.miscellaneousCost || 0);
+    const totalCost = request.items.reduce(
+      (sum, item) => sum + (item.totalCost || 0),
+      0,
+    );
 
     await db.order.create({
       data: {
         status,
-        street,
-        postalCode,
-        thana,
-        district,
-        house,
-        road,
-        mapLink,
+        street: faker.location.streetAddress(),
+        postalCode: faker.location.zipCode(),
+        thana: faker.location.city(),
+        district: faker.location.state(),
+        house: faker.location.buildingNumber(),
+        road: faker.location.street(),
+        mapLink: `https://maps.google.com/?q=${faker.location.latitude()},${faker.location.longitude()}`,
         totalCost,
         customer: { connect: { id: customer.id } },
         request: { connect: { id: request.id } },
+        items: {
+          create: request.items.map((item) => ({
+            requestItemId: item.id,
+            quantity: item.quantity,
+            price: item.totalCost || 0,
+          })),
+        },
       },
     });
   }
 
-  console.log(`Seeded ${numberOfOrders} orders.`);
+  console.log(`Seeded ${numberOfOrders} orders with items.`);
 }
 
 async function createPayments() {
@@ -343,16 +322,13 @@ async function createSupportTickets() {
   console.log(`Seeded ${numberOfTickets} support tickets.`);
 }
 
-
-
 async function main() {
   await createPanelUser();
-  await createCustomers();
-  await createProductRequests();
-  await createOrders();
-  await createPayments();
-  await createSupportTickets();
-
+  // await createCustomers();
+  // await createProductRequests();
+  // await createOrders();
+  // await createPayments();
+  // await createSupportTickets();
 }
 
 main()

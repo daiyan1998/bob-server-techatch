@@ -202,10 +202,44 @@ model Request {
   createdAt                 DateTime      @default(now()) @map("created_at")
   updatedAt                 DateTime      @updatedAt @map("updated_at")
   requestType               RequestType   @map("request_type")
-  orderId                   String?
-  Order                     Order?
+
+  items  RequestItem[]
+  orders Order[]
 
   @@map("requests")
+}
+
+model RequestItem {
+  id        String  @id @default(uuid())
+  requestId String  @map("request_id")
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  productUrl  String? @map("product_url")
+  productName String? @map("product_name")
+  description String?
+  image       String?
+
+  quantity Int @default(1)
+
+  productCost               Float? @map("product_cost")
+  internationalShippingCost Float? @map("international_shipping_cost")
+  localShippingCost         Float? @map("local_shipping_cost")
+  miscellaneousCost         Float? @map("miscellaneous_cost")
+
+  totalCost Float? @map("total_cost")
+
+  status RequestStatus @default(PENDING)
+
+  adminNotes            String?   @map("admin_notes")
+  customerNotes         String?   @map("customer_notes")
+  estimatedDeliveryDate DateTime? @map("estimated_delivery_date")
+
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("request_items")
 }
 
 model Order {
@@ -225,13 +259,30 @@ model Order {
   customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   customerId     String           @map("customer_id")
   request        Request          @relation(fields: [requestId], references: [id], onDelete: Restrict)
-  requestId      String           @unique @map("request_id")
+  requestId      String           @map("request_id")
   orderStatusLog OrderStatusLog[]
   refundedAmount Float            @default(0) @map("refunded_amount")
   isRefunded     Boolean          @default(false) @map("is_refunded")
   RefundRequest  RefundRequest?
 
+  items OrderItem[]
+
   @@map("orders")
+}
+
+model OrderItem {
+  id String @id @default(uuid())
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  requestItemId String      @map("request_item_id")
+  requestItem   RequestItem @relation(fields: [requestItemId], references: [id])
+
+  quantity Int
+  price    Float
+
+  @@map("order_items")
 }
 
 model OrderStatusLog {

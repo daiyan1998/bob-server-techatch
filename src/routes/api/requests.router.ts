@@ -5,11 +5,13 @@ import {
   getAllCustomerRequests,
   getRequest,
   updateRequestByIdController,
+  updateRequestItemController,
 } from "@/controllers/requests.controller";
 import validate from "@/middlewares/validate";
 import {
   createRequestSchema,
   updateRequestByAdminSchema,
+  updateRequestItemByAdminSchema,
   getRequestSchema,
 } from "@/validations/requests";
 import upload from "@/middlewares/multer";
@@ -32,6 +34,16 @@ router
     verifyJWT,
     validate(updateRequestByAdminSchema),
     updateRequestByIdController,
+  );
+
+// Per-item admin update route
+router
+  .route("/:requestId/items/:itemId")
+  .patch(
+    verifyJWT,
+    verifyRoles("ADMIN"),
+    validate(updateRequestItemByAdminSchema),
+    updateRequestItemController,
   );
 
 export default router;

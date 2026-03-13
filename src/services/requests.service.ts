@@ -7,7 +7,11 @@ import {
   RequestStatus,
   RequestType,
 } from "@prisma/client";
-import { CreateRequest, UpdateRequest } from "@/validations/requests";
+import {
+  CreateRequest,
+  UpdateRequest,
+  UpdateRequestItem,
+} from "@/validations/requests";
 import { RequestsQueryOptions } from "@/types/requests";
 import {
   createAdminNotification,
@@ -37,26 +41,46 @@ export const createProductRequest = async (
       throw new Error("Customer not verified");
     }
 
-    const request = await db.request.create({
-      data: {
-        id: generateId(SysEntities.PRODUCT_REQUEST),
-        customerId: customerId,
-        productUrl: data.productUrl,
-        productName: data.productName,
-        description: data.description,
-        quantity: parseInt(`${data.quantity}`),
-        requestType: data.requestType,
-        image: data.image,
-      },
-      include: {
-        customer: true,
-      },
+    const request = await db.$transaction(async (tx) => {
+      // Create the request (parent)
+      const newRequest = await tx.request.create({
+        data: {
+          id: generateId(SysEntities.PRODUCT_REQUEST),
+          customerId: customerId,
+          status: RequestStatus.PENDING,
+          requestType: data.requestType,
+        },
+      });
+
+      // Create request items
+      for (const item of data.items) {
+        await tx.requestItem.create({
+          data: {
+            id: generateId(SysEntities.REQUEST_ITEM),
+            requestId: newRequest.id,
+            productUrl: item.productUrl,
+            productName: item.productName,
+            description: item.description,
+            quantity: parseInt(`${item.quantity}`),
+            image: data.image,
+          },
+        });
+      }
+
+      // Return with items and customer
+      return tx.request.findUnique({
+        where: { id: newRequest.id },
+        include: {
+          customer: true,
+          items: true,
+        },
+      });
     });
 
     await createAdminNotification(
       "A new product has been requested",
-      `A product has been requested by ${request.customer.firstName} ${request.customer.lastName}`,
-      request.id.toString(),
+      `A product has been requested by ${request!.customer.firstName} ${request!.customer.lastName}`,
+      request!.id.toString(),
       NotificationType.REQUEST,
       NotificationRequestType.POSITIVE,
     );
@@ -83,11 +107,14 @@ export const getRequestsByCustomerId = async (
   try {
     const where: Prisma.RequestWhereInput = {
       customerId: customerId,
-      orderId: null,
     };
 
     if (q) {
-      where.productName = { contains: q, mode: "insensitive" };
+      where.items = {
+        some: {
+          productName: { contains: q, mode: "insensitive" },
+        },
+      };
     }
 
     if (statuses && statuses.length > 0) {
@@ -117,6 +144,9 @@ export const getRequestsByCustomerId = async (
       take: pageSize,
       orderBy: {
         createdAt: "desc",
+      },
+      include: {
+        items: true,
       },
     });
 
@@ -195,6 +225,7 @@ export const getAllRequests = async (options: RequestsQueryOptions) => {
             nationality: true,
           },
         },
+        items: true,
       },
     });
 
@@ -222,6 +253,7 @@ export const getRequestById = async (id: string) => {
             address: true,
           },
         },
+        items: true,
       },
     });
     if (!request) {
@@ -233,37 +265,37 @@ export const getRequestById = async (id: string) => {
   }
 };
 
-export const updateRequestById = async (
-  id: string,
-  data: UpdateRequest["body"],
+/**
+ * Update a request item by its ID (admin action).
+ * Used for per-item approval/rejection and setting costs.
+ */
+export const updateRequestItemById = async (
+  requestId: string,
+  itemId: string,
+  data: UpdateRequestItem["body"],
   userId?: string,
 ) => {
   try {
-    const order = await db.order.findUnique({
-      where: {
-        requestId: id,
-      },
+    const requestItem = await db.requestItem.findUnique({
+      where: { id: itemId },
+      include: { request: true },
     });
 
-    if (order) {
-      throw new Error("Cannot update request. Order already placed.");
+    if (!requestItem) {
+      throw new Error("Request item not found.");
     }
 
-    const request = await db.request.findUnique({
-      where: { id },
-    });
-
-    if (!request) {
-      throw new Error("Request not found.");
+    if (requestItem.requestId !== requestId) {
+      throw new Error("Request item does not belong to this request.");
     }
 
     // Check if status is the same (only if status is provided)
-    if (data.status && request.status === data.status) {
-      throw new Error("Request already in that status.");
+    if (data.status && requestItem.status === data.status) {
+      throw new Error("Request item already in that status.");
     }
 
     // Initialize update data object
-    const updateData: Prisma.RequestUpdateInput = {};
+    const updateData: Prisma.RequestItemUpdateInput = {};
 
     // Handle cost fields only if they are provided
     if (data.productCost !== undefined) {
@@ -309,22 +341,22 @@ export const updateRequestById = async (
       const productCost =
         data.productCost !== undefined
           ? parseInt(`${data.productCost}`) || 0
-          : request.productCost || 0;
+          : requestItem.productCost || 0;
 
       const internationalShippingCost =
         data.internationalShippingCost !== undefined
           ? parseInt(`${data.internationalShippingCost}`) || 0
-          : request.internationalShippingCost || 0;
+          : requestItem.internationalShippingCost || 0;
 
       const localShippingCost =
         data.localShippingCost !== undefined
           ? parseInt(`${data.localShippingCost}`) || 0
-          : request.localShippingCost || 0;
+          : requestItem.localShippingCost || 0;
 
       const miscellaneousCost =
         data.miscellaneousCost !== undefined
           ? parseInt(`${data.miscellaneousCost}`) || 0
-          : request.miscellaneousCost || 0;
+          : requestItem.miscellaneousCost || 0;
 
       const totalCost =
         productCost +
@@ -340,7 +372,94 @@ export const updateRequestById = async (
       updateData.totalCost = totalCost;
     }
 
-    // If no fields to update, return the current request
+    // If no fields to update, return the current request item
+    if (Object.keys(updateData).length === 0) {
+      return requestItem;
+    }
+
+    const updatedItem = await db.requestItem.update({
+      where: { id: itemId },
+      data: updateData,
+      include: {
+        request: {
+          include: {
+            customer: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const customer = updatedItem.request.customer;
+
+    if (data.status) {
+      await createCustomerNotification(
+        `Admin ${data.status} your request item`,
+        "",
+        updatedItem.request.id.toString(),
+        requestItem.request.customerId,
+        NotificationType.REQUEST,
+        data.status === RequestStatus.CANCELED ||
+          data.status === RequestStatus.REJECTED
+          ? NotificationRequestType.NEGATIVE
+          : NotificationRequestType.POSITIVE,
+      );
+
+      if (data.status === RequestStatus.APPROVED) {
+        await sendRequestStatusNotification(
+          requestItem.request.customerId,
+          data.status,
+          updatedItem.request.requestType === RequestType.DIRECT
+            ? `${updatedItem.description}`
+            : `${updatedItem.productUrl}`,
+          (updatedItem.totalCost || 0).toString(),
+          updatedItem.adminNotes || "",
+        );
+      }
+    }
+
+    return updatedItem;
+  } catch (error) {
+    const errMessage =
+      error instanceof Error ? error.message : "Error updating request item.";
+    throw new Error(errMessage);
+  }
+};
+
+/**
+ * Update a request at the top level (e.g. customer cancellation).
+ * Kept for backward compatibility.
+ */
+export const updateRequestById = async (
+  id: string,
+  data: UpdateRequest["body"],
+  userId?: string,
+) => {
+  try {
+    const request = await db.request.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!request) {
+      throw new Error("Request not found.");
+    }
+
+    // Check if status is the same (only if status is provided)
+    if (data.status && request.status === data.status) {
+      throw new Error("Request already in that status.");
+    }
+
+    const updateData: Prisma.RequestUpdateInput = {};
+
+    if (data.status) {
+      updateData.status = data.status;
+    }
+
     if (Object.keys(updateData).length === 0) {
       return request;
     }
@@ -355,6 +474,7 @@ export const updateRequestById = async (
             lastName: true,
           },
         },
+        items: true,
       },
     });
 
@@ -373,7 +493,6 @@ export const updateRequestById = async (
           : NotificationRequestType.POSITIVE,
       );
     } else if (data.status) {
-      // Only send customer notification if status is updated
       await createCustomerNotification(
         `Admin ${data.status} your request`,
         "",
@@ -385,18 +504,6 @@ export const updateRequestById = async (
           ? NotificationRequestType.NEGATIVE
           : NotificationRequestType.POSITIVE,
       );
-
-      if (data.status === RequestStatus.APPROVED) {
-        await sendRequestStatusNotification(
-          updatedRequest.customerId!,
-          data.status,
-          updatedRequest.requestType === RequestType.DIRECT
-            ? `${updatedRequest.description}`
-            : `${updatedRequest.productUrl}`,
-          (updatedRequest.totalCost || 0).toString(),
-          updatedRequest.adminNotes || "",
-        );
-      }
     }
 
     return updatedRequest;

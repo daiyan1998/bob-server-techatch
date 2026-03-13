@@ -18,6 +18,7 @@ export const cookieOptions: CookieOptions = {
 export enum SysEntities {
   ORDER = "ORDER",
   PRODUCT_REQUEST = "PRODUCT_REQUEST",
+  REQUEST_ITEM = "REQUEST_ITEM",
   PAYMENT = "PAYMENT",
   SUPPORT_TICKET = "SUPPORT_TICKET",
 }

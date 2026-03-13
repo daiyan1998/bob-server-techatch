@@ -5,6 +5,7 @@ export const generateId = (resource: SysEntities) => {
   const prefixes: Record<SysEntities, string> = {
     [SysEntities.ORDER]: "ORD",
     [SysEntities.PRODUCT_REQUEST]: "REQ",
+    [SysEntities.REQUEST_ITEM]: "RIT",
     [SysEntities.PAYMENT]: "PAY",
     [SysEntities.SUPPORT_TICKET]: "SUP",
   };

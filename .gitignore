@@ -134,7 +134,7 @@ dist
 public/tmp/
 .qodo
 
-
-# CUSTOm
-prisma/migrations/
-prisma/prisma/
+# Prisma generated client
+prisma/generated/
+prisma/prisma/generated/
+node_modules/.prisma
